@@ -7,13 +7,15 @@ from dateutil.relativedelta import relativedelta
 from urllib import request
 
 import pandas as pd
-import mlflow
 
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
 
 from prefect import flow, task, get_run_logger
+from prefect.deployments import DeploymentSpec
+from prefect.orion.schemas.schedules import CronSchedule, IntervalSchedule
+from prefect.flow_runners import SubprocessFlowRunner
 
 FILEPATH = Path(__file__).parent
 DATA_PATH = FILEPATH / "data"
@@ -21,6 +23,7 @@ MODELS_PATH = FILEPATH / "models"
 
 DATA_PATH.mkdir(exist_ok=True, parents=True)
 MODELS_PATH.mkdir(exist_ok=True, parents=True)
+
 
 @task
 def get_train_val_data(date: datetime) -> tuple[Path, Path]:
@@ -39,11 +42,13 @@ def get_train_val_data(date: datetime) -> tuple[Path, Path]:
             _ = request.urlretrieve(url, DATA_PATH / name)
     
     return DATA_PATH / train_name, DATA_PATH / val_name
-    
+
+
 @task
 def read_data(path):
     df = pd.read_parquet(path)
     return df
+
 
 @task
 def prepare_features(df, categorical, train=True):
@@ -60,6 +65,7 @@ def prepare_features(df, categorical, train=True):
     
     df[categorical] = df[categorical].fillna(-1).astype('int').astype('str')
     return df
+
 
 @task
 def train_model(df, categorical):
@@ -80,6 +86,7 @@ def train_model(df, categorical):
     logger.info(f"The MSE of training is: {mse}")
     return lr, dv
 
+
 @task
 def run_model(df, categorical, dv, lr):
     logger = get_run_logger()
@@ -92,8 +99,9 @@ def run_model(df, categorical, dv, lr):
     logger.info(f"The MSE of validation is: {mse}")
     return
 
+
 @flow
-def main(date: str = None):
+def main(date: str = "2021-08-15"):
 
     if not date:
         date = datetime.today()
@@ -124,14 +132,15 @@ def main(date: str = None):
     with open(dv_path, 'wb') as handle:
         pickle.dump(dv, handle)
 
-from prefect.deployments import DeploymentSpec
-from prefect.orion.schemas.schedules import CronSchedule
-from prefect.flow_runners import SubprocessFlowRunner
 
+# main()
 DeploymentSpec(
     flow=main,
     name="model_training",
-    schedule=CronSchedule(cron="0 9 15 * *"),
+    schedule=CronSchedule(
+        cron="0 9 15 * *",
+        timezone="America/New_York"
+    ),
     flow_runner=SubprocessFlowRunner(),
     tags=["ml"]
 )
